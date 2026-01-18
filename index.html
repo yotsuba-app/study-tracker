@@ -160,6 +160,9 @@ canvas {
 </head>
 
 <body>
+  <button id="loadBtn">クラウドから読み込み</button>
+<button id="saveBtn">クラウドへ保存</button>
+
 
 <div id="tabs">
   <button class="tab-btn active" id="tab-calendar">カレンダー</button>
@@ -548,8 +551,64 @@ function drawCurrentGraph() {
 
 /* 初期描画 */
 renderGrid();
+// ★ 直子さんのGAS WebアプリURL
+const API_URL = "https://script.google.com/macros/s/AKfycbwR1bbOm49GMlRFJRKYRdjdolHdZRpJ1pI7Z0NOtU0O5yljOkVjQSsUTzjsrf-MlCivfw/exec";
+
+// ------------------------------
+// クラウドへ保存（スプレッドシートへ）
+// ------------------------------
+async function saveToCloud() {
+    const data = [];
+
+    const rows = document.querySelectorAll("#studyTable tr");
+    rows.forEach(row => {
+        const rowData = [];
+        row.querySelectorAll("td, th").forEach(cell => {
+            rowData.push(cell.innerText);
+        });
+        data.push(rowData);
+    });
+
+    await fetch(API_URL, {
+        method: "POST",
+        body: JSON.stringify({ mode: "save", data })
+    });
+
+    alert("クラウドへ保存しました");
+}
+
+// ------------------------------
+// クラウドから読み込み（スプレッドシート → アプリ）
+// ------------------------------
+async function loadFromCloud() {
+    const res = await fetch(API_URL + "?mode=load");
+    const values = await res.json();
+
+    const table = document.querySelector("#studyTable");
+    table.innerHTML = "";
+
+    values.forEach(row => {
+        const tr = document.createElement("tr");
+        row.forEach(cell => {
+            const td = document.createElement("td");
+            td.innerText = cell;
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    });
+
+    alert("クラウドから読み込みました");
+}
+
+// ------------------------------
+// ボタンにイベントをつける
+// ------------------------------
+document.getElementById("saveBtn").addEventListener("click", saveToCloud);
+document.getElementById("loadBtn").addEventListener("click", loadFromCloud);
+  
 </script>
 
 </body>
 </html>
+
 
