@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Study Time Tracker</title>
+
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  padding: 16px;
+}
+
+h2 {
+  margin: 8px 0 12px;
+}
+
+/* タブ */
+#tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid #aaa;
+  background: #f5f5f5;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  background: #ddd;
+  font-weight: 600;
+}
+
+/* 年月ナビゲーション */
+#nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.nav-btn {
+  cursor: pointer;
+  padding: 2px 8px;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.nav-btn:hover {
+  background: #eee;
+}
+
+/* モードトグル（月⇔週） */
+#mode-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.toggle-label {
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid #aaa;
+  background: #fafafa;
+}
+
+.toggle-label.active {
+  background: #4a90e2;
+  color: #fff;
+  border-color: #4a90e2;
+}
+
+/* 週範囲表示 */
+#week-range {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+/* グリッド */
+.grid {
+  display: grid;
+  font-size: 12px;
+}
+
+/* セル共通 */
+.cell {
+  border: 1px solid #ccc;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+/* 固定ラベル */
+.time {
+  background: #f3f3f3;
+  cursor: default;
+  font-weight: 500;
+}
+
+/* 勉強色 */
+.study { background: #4a90e2; }
+
+/* ハイライト（オレンジ枠） */
+.today-col {
+  outline: 2px solid #ffd9b3;
+  outline-offset: -2px;
+}
+.now-row {
+  outline: 2px solid #ffe8cc;
+  outline-offset: -2px;
+}
+.now-today {
+  outline: 2px solid #ffbf80;
+  outline-offset: -2px;
+}
+
+/* グラフタブ */
+#graph-controls {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.graph-tab-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #aaa;
+  background: #f5f5f5;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.graph-tab-btn.active {
+  background: #ddd;
+  font-weight: 600;
+}
+
+#calendar-view, #graph-view {
+  display: none;
+}
+
+#calendar-view.active,
+#graph-view.active {
+  display: block;
+}
+
+canvas {
+  max-width: 100%;
+}
+</style>
+</head>
+
+<body>
+
+<div id="tabs">
+  <button class="tab-btn active" id="tab-calendar">カレンダー</button>
+  <button class="tab-btn" id="tab-graph">グラフ</button>
+</div>
+
+<div id="calendar-view" class="active">
+  <div id="nav-bar">
+    <button class="nav-btn" id="prev-year">←年</button>
+    <span id="year-label"></span>
+    <button class="nav-btn" id="next-year">年→</button>
+
+    <button class="nav-btn" id="prev-month">←月</button>
+    <span id="month-label"></span>
+    <button class="nav-btn" id="next-month">月→</button>
+
+    <div id="mode-toggle">
+      <span id="mode-month" class="toggle-label active">月</span>
+      <span>⇔</span>
+      <span id="mode-week" class="toggle-label">週</span>
+    </div>
+  </div>
+
+  <div id="week-range"></div>
+
+  <h2 id="total"></h2>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div id="graph-view">
+  <div id="graph-controls">
+    <button class="graph-tab-btn active" id="btn-month-graph">月グラフ</button>
+    <button class="graph-tab-btn" id="btn-week-graph">週グラフ</button>
+  </div>
+  <canvas id="chart-canvas"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const SLOTS = 48;
+
+let currentYear = new Date().getFullYear();
+let currentMonth = new Date().getMonth() + 1;
+let viewMode = "month"; // "month" or "week"
+let currentWeekIndex = 0; // 月内の第何週か（0〜）
+
+function getDaysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function loadState(year, month) {
+  const key = `study-log-${year}-${month}`;
+  const saved = localStorage.getItem(key);
+  const days = getDaysInMonth(year, month);
+  return saved
+    ? JSON.parse(saved)
+    : Array.from({ length: days }, () => Array(SLOTS).fill(0));
+}
+
+function saveState() {
+  const key = `study-log-${currentYear}-${currentMonth}`;
+  localStorage.setItem(key, JSON.stringify(state));
+}
+
+let state = loadState(currentYear, currentMonth);
+
+function getWeeksInMonth(year, month) {
+  const days = getDaysInMonth(year, month);
+  const first = new Date(year, month - 1, 1);
+  const firstDow = first.getDay(); // 0=Sun
+  const weeks = [];
+  let startOffset = -firstDow;
+  while (true) {
+    const startDate = 1 + startOffset;
+    const endDate = startDate + 6;
+    if (startDate > days) break;
+    weeks.push({
+      start: Math.max(1, startDate),
+      end: Math.min(days, endDate)
+    });
+    startOffset += 7;
+  }
+  return weeks;
+}
+
+function renderGrid() {
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+
+  const weeks = getWeeksInMonth(currentYear, currentMonth);
+  if (currentWeekIndex >= weeks.length) currentWeekIndex = weeks.length - 1;
+  if (currentWeekIndex < 0) currentWeekIndex = 0;
+
+  let dayStart = 1;
+  let dayEnd = daysInMonth;
+  if (viewMode === "week") {
+    const w = weeks[currentWeekIndex];
+    dayStart = w.start;
+    dayEnd = w.end;
+    document.getElementById("week-range").textContent =
+      `${currentMonth}/${w.start}〜${currentMonth}/${w.end} の週`;
+  } else {
+    document.getElementById("week-range").textContent = "";
+  }
+
+  const colCount = dayEnd - dayStart + 1;
+  grid.style.gridTemplateColumns = `140px repeat(${colCount}, 36px)`;
+
+  document.getElementById("year-label").textContent = `${currentYear}年`;
+  document.getElementById("month-label").textContent = `${currentMonth}月`;
+
+  const corner = document.createElement("div");
+  corner.textContent = "時間＼日";
+  corner.className = "cell time";
+  grid.append(corner);
+
+  for (let d = dayStart; d <= dayEnd; d++) {
+    const h = document.createElement("div");
+    h.textContent = d;
+    h.className = "cell time";
+    grid.append(h);
+  }
+
+  for (let t = 0; t < SLOTS; t++) {
+    const label = document.createElement("div");
+    const h = String(Math.floor(t / 2)).padStart(2, "0");
+    const m = t % 2 === 0 ? "00" : "30";
+    label.textContent = `${h}:${m}–${m === "00" ? h + ":30" : String(Number(h)+1).padStart(2,"0") + ":00"}`;
+    label.className = "cell time";
+    grid.append(label);
+
+    for (let d = dayStart; d <= dayEnd; d++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      paint(cell, state[d - 1][t]);
+
+      cell.onclick = () => {
+        state[d - 1][t] = state[d - 1][t] === 0 ? 1 : 0;
+        paint(cell, state[d - 1][t]);
+        saveState();
+        updateTotal();
+        highlightNow();
+      };
+
+      grid.append(cell);
+    }
+  }
+
+  updateTotal();
+  highlightNow();
+}
+
+function paint(cell, v) {
+  cell.classList.remove("study");
+  if (v === 1) cell.classList.add("study");
+}
+
+function updateTotal() {
+  const total = state.flat().filter(v => v === 1).length * 0.5;
+  document.getElementById("total").textContent =
+    `${currentYear}年${currentMonth}月の勉強時間：${total} 時間`;
+}
+
+function highlightNow() {
+  const now = new Date();
+  const todayYear = now.getFullYear();
+  const todayMonth = now.getMonth() + 1;
+  const todayDate = now.getDate();
+  const hour = now.getHours();
+  const min = now.getMinutes();
+  const slot = hour * 2 + (min >= 30 ? 1 : 0);
+
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const weeks = getWeeksInMonth(currentYear, currentMonth);
+  let dayStart = 1;
+  let dayEnd = daysInMonth;
+  if (viewMode === "week") {
+    const w = weeks[currentWeekIndex];
+    dayStart = w.start;
+    dayEnd = w.end;
+  }
+  const colCount = dayEnd - dayStart + 1;
+
+  const cells = document.querySelectorAll("#grid .cell");
+  let todayColIndex = -1;
+  if (todayYear === currentYear && todayMonth === currentMonth &&
+      todayDate >= dayStart && todayDate <= dayEnd) {
+    todayColIndex = todayDate - dayStart + 1;
+  }
+
+  cells.forEach((cell, index) => {
+    const col = index % (colCount + 1);
+    const row = Math.floor(index / (colCount + 1));
+
+    cell.classList.remove("today-col", "now-row", "now-today");
+
+    if (col === todayColIndex) cell.classList.add("today-col");
+    if (row === slot + 1) cell.classList.add("now-row");
+    if (col === todayColIndex && row === slot + 1) cell.classList.add("now-today");
+  });
+}
+
+/* タブ切り替え */
+const tabCalendar = document.getElementById("tab-calendar");
+const tabGraph = document.getElementById("tab-graph");
+const calendarView = document.getElementById("calendar-view");
+const graphView = document.getElementById("graph-view");
+
+tabCalendar.onclick = () => {
+  tabCalendar.classList.add("active");
+  tabGraph.classList.remove("active");
+  calendarView.classList.add("active");
+  graphView.classList.remove("active");
+};
+
+tabGraph.onclick = () => {
+  tabGraph.classList.add("active");
+  tabCalendar.classList.remove("active");
+  graphView.classList.add("active");
+  calendarView.classList.remove("active");
+  drawCurrentGraph();
+};
+
+/* 年月ナビゲーション */
+document.getElementById("prev-year").onclick = () => {
+  currentYear--;
+  state = loadState(currentYear, currentMonth);
+  renderGrid();
+};
+
+document.getElementById("next-year").onclick = () => {
+  currentYear++;
+  state = loadState(currentYear, currentMonth);
+  renderGrid();
+};
+
+document.getElementById("prev-month").onclick = () => {
+  currentMonth--;
+  if (currentMonth === 0) {
+    currentMonth = 12;
+    currentYear--;
+  }
+  state = loadState(currentYear, currentMonth);
+  currentWeekIndex = 0;
+  renderGrid();
+};
+
+document.getElementById("next-month").onclick = () => {
+  currentMonth++;
+  if (currentMonth === 13) {
+    currentMonth = 1;
+    currentYear++;
+  }
+  state = loadState(currentYear, currentMonth);
+  currentWeekIndex = 0;
+  renderGrid();
+};
+
+/* モードトグル（月⇔週） */
+const modeMonthBtn = document.getElementById("mode-month");
+const modeWeekBtn = document.getElementById("mode-week");
+
+modeMonthBtn.onclick = () => {
+  viewMode = "month";
+  modeMonthBtn.classList.add("active");
+  modeWeekBtn.classList.remove("active");
+  renderGrid();
+};
+
+modeWeekBtn.onclick = () => {
+  viewMode = "week";
+  modeWeekBtn.classList.add("active");
+  modeMonthBtn.classList.remove("active");
+  currentWeekIndex = 0;
+  renderGrid();
+};
+
+/* グラフ描画 */
+let chartInstance = null;
+const chartCanvas = document.getElementById("chart-canvas");
+const btnMonthGraph = document.getElementById("btn-month-graph");
+const btnWeekGraph = document.getElementById("btn-week-graph");
+let currentGraphMode = "month"; // "month" or "week"
+
+btnMonthGraph.onclick = () => {
+  currentGraphMode = "month";
+  btnMonthGraph.classList.add("active");
+  btnWeekGraph.classList.remove("active");
+  drawCurrentGraph();
+};
+
+btnWeekGraph.onclick = () => {
+  currentGraphMode = "week";
+  btnWeekGraph.classList.add("active");
+  btnMonthGraph.classList.remove("active");
+  drawCurrentGraph();
+};
+
+function getDailyStudyHours(year, month) {
+  const days = getDaysInMonth(year, month);
+  const st = loadState(year, month);
+  const result = [];
+  for (let d = 0; d < days; d++) {
+    const slots = st[d].filter(v => v === 1).length;
+    result.push(slots * 0.5);
+  }
+  return result;
+}
+
+function getWeeklyStudyHours(year, month) {
+  const days = getDaysInMonth(year, month);
+  const st = loadState(year, month);
+  const weeks = getWeeksInMonth(year, month);
+  const result = [];
+  const labels = [];
+  weeks.forEach(w => {
+    let sum = 0;
+    for (let d = w.start; d <= w.end; d++) {
+      const slots = st[d - 1].filter(v => v === 1).length;
+      sum += slots * 0.5;
+    }
+    result.push(sum);
+    labels.push(`${month}/${w.start}〜${month}/${w.end}`);
+  });
+  return { labels, data: result };
+}
+
+function drawCurrentGraph() {
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+
+  const ctx = chartCanvas.getContext("2d");
+
+  if (currentGraphMode === "month") {
+    const daily = getDailyStudyHours(currentYear, currentMonth);
+    const labels = daily.map((_, i) => `${currentMonth}/${i + 1}`);
+    chartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: `${currentYear}年${currentMonth}月 日別勉強時間`,
+          data: daily,
+          backgroundColor: "rgba(76, 175, 80, 0.6)",
+          borderColor: "rgba(56, 142, 60, 1)",
+          borderWidth: 1
+        }]
+      },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: "時間" }
+          }
+        }
+      }
+    });
+  } else {
+    const weekly = getWeeklyStudyHours(currentYear, currentMonth);
+    chartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: weekly.labels,
+        datasets: [{
+          label: `${currentYear}年${currentMonth}月 週別勉強時間`,
+          data: weekly.data,
+          backgroundColor: "rgba(76, 175, 80, 0.6)",
+          borderColor: "rgba(56, 142, 60, 1)",
+          borderWidth: 1
+        }]
+      },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: "時間" }
+          }
+        }
+      }
+    });
+  }
+}
+
+/* 初期描画 */
+renderGrid();
+</script>
+
+</body>
+</html>
+
